@@ -1,0 +1,1212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Audubon-Inspired Generative Bird</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin: 0; background: #0f0f10; color: white; font-family: Arial, sans-serif; }
+    canvas { display: block; margin: 0 auto; }
+    .instructions { position: fixed; top: 12px; left: 12px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; font-size: 14px; max-width: 300px; z-index: 9999; }
+    .instructions h3 { margin: 0 0 10px 0; color: #ffd700; }
+    .instructions p { margin: 5px 0; }
+    .instructions .key { background: #333; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
+  <script>
+// Audubon-inspired generative bird
+// - Natural, vibrant palette
+// - Clean archival paper background
+// - Scientific illustration style with cross-hatching
+// - Click: reroll, S: save PNG
+
+let currentSeed = Math.floor(Math.random() * 1e9);
+let isMuted = false;
+let forcedLayoutIndex = -1; // -1 random, 0 small, 1 waterfowl, 2 raptor
+const layoutNames = ['small', 'waterfowl', 'raptor'];
+let currentLayoutName = '';
+
+
+function reroll(seed = Math.floor(Math.random() * 1e9)) {
+  currentSeed = seed;
+  randomSeed(currentSeed);
+  noiseSeed(currentSeed);
+  redraw();
+}
+
+function setup() {
+  pixelDensity(1);
+  // Portrait format evokes illustrative plates
+  createCanvas(1080, 1400);
+  noLoop();
+  textFont('Georgia, Times, serif');
+  reroll(currentSeed);
+  addUI();
+}
+
+function keyPressed() {
+  if (key === 's' || key === 'S') {
+    saveCanvas('audubon_bird_' + currentSeed, 'png');
+  }
+  if (key === 'm' || key === 'M') { isMuted = !isMuted; }
+  if (key === '1') { forcedLayoutIndex = 0; reroll(); tryPlayCall('small'); }
+  if (key === '2') { forcedLayoutIndex = 1; reroll(); tryPlayCall('waterfowl'); }
+  if (key === '3') { forcedLayoutIndex = 2; reroll(); tryPlayCall('raptor'); }
+  if (key === 'o' || key === 'O') { forcedLayoutIndex = 2; reroll(); tryPlayCall('raptor'); } // Force owl generation
+  if (key === 'c' || key === 'C') { tryPlayCall(currentLayoutName || 'small'); }
+}
+
+function mousePressed() {
+  reroll();
+  tryPlayCall(currentLayoutName || 'small');
+}
+
+function draw() {
+  drawAudubonBackground();
+
+  // composition framing
+  push();
+  translate(width * 0.52, height * 0.56);
+  const scaleAll = random(0.9, 1.08);
+  scale(scaleAll);
+  // optional mirroring for pose diversity
+  const mirror = (random() < 0.5) ? -1 : 1;
+  scale(mirror, 1);
+  rotate(radians(random(-6, 4)));
+
+  let species = null;
+  let palette = null;
+  try {
+    const basePalette = pickAudubonPalette();
+    const choice = pickLayoutAndSpecies();
+    currentLayoutName = choice.layoutName;
+    species = choice.spec || {};
+    palette = applySpeciesPalette(basePalette, species);
+    const light = {
+      dir: createVector(-1, -1).normalize(),
+      strength: random(0.6, 0.9)
+    };
+    drawPerch(palette, species);
+    drawBirdAudubon(palette, light, species);
+    window.__lastSpeciesName = (currentLayoutName + ' ' + (species.name || '')).trim();
+  } catch (e) {
+    // render error on canvas
+    push();
+    resetMatrix();
+    noStroke();
+    fill(0, 160);
+    rect(16, 16, width - 32, 80, 8);
+    fill(255);
+    textSize(16);
+    textAlign(LEFT, TOP);
+    text('Render error: ' + (e && e.message ? e.message : e), 24, 24);
+    pop();
+  }
+  pop();
+
+  drawSignature(currentSeed);
+}
+
+// ========= Audubon Palette & Background =========
+
+function pickAudubonPalette() {
+  // Natural, vibrant bird colors inspired by Audubon's plates
+  const palettes = [
+    ['#f8f6f0', '#8B4513', '#CD853F', '#2F4F4F', '#8B0000', '#556B2F'],
+    ['#f5f5dc', '#D2691E', '#DEB887', '#191970', '#DC143C', '#6B8E23'],
+    ['#faf0e6', '#CD853F', '#F4A460', '#4169E1', '#B22222', '#9ACD32'],
+    ['#fff8dc', '#DAA520', '#F0E68C', '#6495ED', '#CD5C5C', '#ADFF2F']
+  ];
+  const base = random(palettes);
+  return {
+    paper: color(base[0]),
+    body: color(base[1]),
+    shadow: lerpColor(color(base[1]), color('#1a1a1a'), 0.6),
+    wing: color(base[2]),
+    deep: color(base[3]),
+    accent: color(base[4]),
+    foliage: color(base[5]),
+    beak: color('#d9b27c'),
+    eye: color('#171717'),
+    highlight: color('#f8f3ea')
+  };
+}
+
+function drawAudubonBackground() {
+  const margin = 42;
+  const pal = pickAudubonPalette(); // temp pick to get paper color only
+  const paper = pal.paper;
+
+  // Base paper gradient - clean, archival quality
+  noStroke();
+  for (let y = 0; y < height; y++) {
+    const t = y / (height - 1);
+    const c = lerpColor(lerpColor(paper, color('#ffffff'), 0.02), color('#e8e0d0'), t * 0.08);
+    fill(c);
+    rect(0, y, width, 1);
+  }
+
+  // Clean border vignette
+  push();
+  noFill();
+  for (let i = 0; i < 25; i++) {
+    const a = map(i, 0, 24, 45, 0);
+    stroke(0, a);
+    rect(margin - i, margin - i, width - (margin - i) * 2, height - (margin - i) * 2, 4);
+  }
+  pop();
+
+  // Subtle paper texture
+  push();
+  const grainDensity = 8000;
+  for (let i = 0; i < grainDensity; i++) {
+    const x = random(width);
+    const y = random(height);
+    const n = noise(x * 0.003, y * 0.003);
+    const a = pow(n, 2) * 18;
+    stroke(40, a);
+    point(x, y);
+  }
+  pop();
+
+  // Plate label (Audubon-style)
+  push();
+  noStroke();
+  fill(0, 90);
+  textSize(16);
+  textAlign(LEFT, BOTTOM);
+  text('Plate ' + (Math.abs(currentSeed % 997) + 1), 24, height - 18);
+  pop();
+}
+
+// ========= Audubon Drawing Primitives =========
+
+function toColor(c) {
+  if (c && typeof c === 'object' && c.levels) return c;
+  try { return color(c || '#000000'); } catch (e) { return color('#000000'); }
+}
+
+function brushStroke(x1, y1, x2, y2, baseWidth, col, jitter = 0.9, passes = 16) {
+  // Draws a soft, slightly irregular stroke composed of many semi-transparent paths
+  push();
+  stroke(toColor(col));
+  strokeCap(ROUND);
+  for (let p = 0; p < passes; p++) {
+    const w = baseWidth * random(0.75, 1.25);
+    strokeWeight(w);
+    beginShape();
+    const steps = Math.max(6, Math.floor(dist(x1, y1, x2, y2) / 12));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = lerp(x1, x2, t) + (noise(p * 10 + t * 2, currentSeed) - 0.5) * jitter * w;
+      const y = lerp(y1, y2, t) + (noise(999 + p * 10 + t * 2, currentSeed) - 0.5) * jitter * w;
+      vertex(x, y);
+    }
+    endShape();
+  }
+  pop();
+}
+
+function softOval(x, y, w, h, col, alpha = 180) {
+  push();
+  noStroke();
+  const base = toColor(col);
+  for (let i = 0; i < 22; i++) {
+    const t = i / 21;
+    const a = alpha * (1 - t) * 0.06;
+    fill(red(base), green(base), blue(base), a);
+    ellipse(x, y, w * (1 - t * 0.2), h * (1 - t * 0.2));
+  }
+  pop();
+}
+
+function featherPolygon(points, fillCol, edgeCol) {
+  push();
+  noStroke();
+  fill(toColor(fillCol));
+  beginShape();
+  for (const pt of points) vertex(pt.x, pt.y);
+  endShape(CLOSE);
+  // edge darkening
+  stroke(toColor(edgeCol));
+  strokeWeight(1.5);
+  noFill();
+  beginShape();
+  for (const pt of points) vertex(pt.x, pt.y);
+  endShape(CLOSE);
+  pop();
+}
+
+// ========= Audubon Primitives =========
+function drawHatchEllipse(cx, cy, w, h, angleDeg, spacing, jitter, alpha) {
+  push();
+  translate(cx, cy);
+  rotate(radians(angleDeg));
+  const rx = w * 0.5;
+  const ry = h * 0.5;
+  stroke(0, alpha);
+  strokeWeight(1);
+  noFill();
+  for (let x = -rx; x <= rx; x += spacing) {
+    const xr = x + random(-jitter, jitter);
+    const k = (1 - (xr * xr) / (rx * rx));
+    if (k <= 0) continue;
+    const y = Math.sqrt(Math.max(0, k)) * ry;
+    line(xr, -y, xr, y);
+  }
+  pop();
+}
+
+function drawWingBars(baseY, wingSpan, wingHeight, numBars, col) {
+  push();
+  stroke(col);
+  strokeWeight(1.2);
+  noFill();
+  for (let i = 1; i <= numBars; i++) {
+    const t = i / (numBars + 1);
+    beginShape();
+    for (let j = 0; j <= 60; j++) {
+      const u = j / 60;
+      const x = -wingSpan * 0.44 + u * (wingSpan * 0.68);
+      const y = baseY - sin(u * PI) * (wingHeight * (0.45 + 0.12 * t)) + 10 * t;
+      vertex(x, y);
+    }
+    endShape();
+  }
+  pop();
+}
+
+function drawCapPatch(headR, col) {
+  push();
+  noStroke();
+  fill(col);
+  arc(0, -headR * 0.2, headR * 1.0, headR * 1.0, radians(200), radians(340), CHORD);
+  pop();
+}
+
+// ========= Species System =========
+
+function asColor(c) { return (c && typeof c === 'object' && c.levels) ? c : color(c || '#000'); }
+
+function applySpeciesPalette(p, s) {
+  const result = Object.assign({}, p);
+  if (s.colors && s.colors.body) result.body = toColor(s.colors.body);
+  if (s.colors && s.colors.wing) result.wing = toColor(s.colors.wing);
+  if (s.colors && s.colors.accent) result.accent = toColor(s.colors.accent);
+  if (s.colors && s.colors.beak) result.beak = toColor(s.colors.beak);
+  if (s.colors && s.colors.deep) result.deep = toColor(s.colors.deep);
+  // keep overall muted look
+  const mute = 0.08;
+  result.body = lerpColor(result.body, color('#a58f74'), mute);
+  result.wing = lerpColor(result.wing, color('#a58f74'), mute);
+  result.accent = lerpColor(result.accent, color('#a58f74'), mute);
+  return result;
+}
+
+function speciesCatalog() {
+  return [
+    // Cardinal
+    {
+      name: 'cardinal',
+      bodyW: [480, 540], bodyH: [320, 360], headR: [130, 150],
+      tiltDeg: [-4, 6], liftY: 0,
+      bodyShape: 'oval', // Classic oval body
+      wingShape: 'rounded', // Rounded wing edges
+      tailPosition: 'center', // Centered tail
+      beak: { type: 'cone', length: 0.85, height: 0.9, color: '#d8a55f' },
+      crest: { on: true, height: 32, width: 46 },
+      tail: { count: 5, len: 160, lenStep: -16, width: 34, widthStep: 4, spreadDeg: 10, baseRot: -2 },
+      wing: { span: 0.92, height: 0.84 },
+      perch: { weight: 18 },
+      colors: { body: '#a84b45', wing: '#7b332f', accent: '#c56a60', deep: '#2c2b30' },
+      mask: { on: true, size: 22 },
+      headX: 0.32, headY: 0.24, legScale: 1.0
+    },
+    // Blue Jay
+    {
+      name: 'blue jay',
+      bodyW: [480, 520], bodyH: [300, 340], headR: [120, 140],
+      tiltDeg: [-6, 4], liftY: -6,
+      bodyShape: 'teardrop', // Teardrop shape for sleek appearance
+      wingShape: 'pointed', // Pointed wing tips
+      tailPosition: 'high', // Higher tail position
+      beak: { type: 'point', length: 1.0, height: 0.5, color: '#c9b68d' },
+      crest: { on: true, height: 24, width: 44 },
+      tail: { count: 6, len: 150, lenStep: -12, width: 28, widthStep: 3, spreadDeg: 14, baseRot: -4 },
+      wing: { span: 0.96, height: 0.86 },
+      perch: { weight: 16 },
+      colors: { body: '#8aa1bc', wing: '#5a708e', accent: '#b7c5d6', deep: '#2a3b54' },
+      mask: { on: true, size: 16 },
+      headX: 0.30, headY: 0.22, legScale: 1.0
+    },
+    // Robin
+    {
+      name: 'robin',
+      bodyW: [520, 560], bodyH: [340, 380], headR: [120, 136],
+      tiltDeg: [-2, 6], liftY: 2,
+      bodyShape: 'round', // Rounder, fuller body
+      wingShape: 'curved', // Curved wing profile
+      tailPosition: 'low', // Lower tail position
+      beak: { type: 'point', length: 0.9, height: 0.6, color: '#dcb778' },
+      crest: { on: false },
+      tail: { count: 5, len: 150, lenStep: -14, width: 30, widthStep: 4, spreadDeg: 8, baseRot: -2 },
+      wing: { span: 0.92, height: 0.82 },
+      perch: { weight: 18 },
+      colors: { body: '#6e5745', wing: '#554235', accent: '#c4743d', deep: '#273343' },
+      bellyPatch: { on: true, strength: 1.0 },
+      headX: 0.28, headY: 0.22, legScale: 1.0
+    },
+    // Wren
+    {
+      name: 'wren',
+      bodyW: [420, 480], bodyH: [300, 330], headR: [110, 125],
+      tiltDeg: [-2, 10], liftY: -6,
+      bodyShape: 'compact', // Compact, upright body
+      wingShape: 'short', // Shorter wings
+      tailPosition: 'upright', // Upright tail position
+      beak: { type: 'point', length: 0.8, height: 0.4, color: '#c9b18a' },
+      crest: { on: false },
+      tail: { count: 4, len: 120, lenStep: -14, width: 26, widthStep: 3, spreadDeg: 18, baseRot: 22 },
+      wing: { span: 0.9, height: 0.78 },
+      perch: { weight: 14 },
+      colors: { body: '#8f7a64', wing: '#6f5a48', accent: '#b29c82', deep: '#2c2c2c' },
+      headX: 0.26, headY: 0.20, legScale: 0.9
+    },
+    // Hummingbird
+    {
+      name: 'hummingbird',
+      bodyW: [360, 420], bodyH: [260, 300], headR: [100, 116],
+      tiltDeg: [-12, 2], liftY: -18,
+      bodyShape: 'streamlined', // Streamlined, aerodynamic body
+      wingShape: 'long', // Long, narrow wings
+      tailPosition: 'forked', // Forked tail
+      beak: { type: 'needle', length: 1.6, height: 0.25, color: '#3c3c3c' },
+      crest: { on: false },
+      tail: { count: 4, len: 90, lenStep: -10, width: 22, widthStep: 2, spreadDeg: 10, baseRot: -6 },
+      wing: { span: 0.86, height: 0.7 },
+      perch: { weight: 10 },
+      colors: { body: '#6f8a6f', wing: '#4f6a55', accent: '#a6b9a0', deep: '#273343' },
+      throatPatch: { on: true, color: '#9a3b3b' },
+      headX: 0.34, headY: 0.20, legScale: 0.6
+    },
+    // Woodpecker
+    {
+      name: 'woodpecker',
+      bodyW: [520, 560], bodyH: [340, 380], headR: [120, 140],
+      tiltDeg: [-10, 0], liftY: -4,
+      bodyShape: 'cylindrical', // Cylindrical body for tree clinging
+      wingShape: 'angular', // Angular wing shape
+      tailPosition: 'stiff', // Stiff tail for support
+      beak: { type: 'chisel', length: 1.2, height: 0.5, color: '#4a4a4a' },
+      crest: { on: true, height: 22, width: 42 },
+      tail: { count: 6, len: 150, lenStep: -12, width: 26, widthStep: 3, spreadDeg: 6, baseRot: -12 },
+      wing: { span: 0.94, height: 0.82 },
+      perch: { weight: 20 },
+      colors: { body: '#d7d0c6', wing: '#6a5a4a', accent: '#a53b36', deep: '#283140' },
+      headX: 0.30, headY: 0.20, legScale: 1.2
+    },
+    // Sparrow
+    {
+      name: 'sparrow',
+      bodyW: [440, 500], bodyH: [300, 340], headR: [110, 126],
+      tiltDeg: [-4, 8], liftY: -2,
+      bodyShape: 'oval', // Classic oval body
+      wingShape: 'rounded', // Rounded wings
+      tailPosition: 'center', // Centered tail
+      beak: { type: 'cone', length: 0.7, height: 0.8, color: '#caa56d' },
+      crest: { on: false },
+      tail: { count: 5, len: 130, lenStep: -12, width: 28, widthStep: 3, spreadDeg: 10, baseRot: -2 },
+      wing: { span: 0.9, height: 0.8 },
+      perch: { weight: 14 },
+      colors: { body: '#8a7864', wing: '#6d5c4c', accent: '#b49c84', deep: '#2f2f2f' },
+      headX: 0.28, headY: 0.20, legScale: 1.0
+    },
+    // Owl
+    {
+      name: 'owl',
+      bodyW: [520, 580], bodyH: [380, 430], headR: [160, 190],
+      tiltDeg: [-1, 1], liftY: -4, // Reduced tilt for more forward-facing pose
+      bodyShape: 'barrel', // Barrel-shaped body for owls
+      wingShape: 'broad', // Broad, rounded wings
+      tailPosition: 'short', // Short tail
+      beak: { type: 'cone', length: 0.5, height: 0.9, color: '#bfa771' },
+      crest: { on: false },
+      tail: { count: 4, len: 120, lenStep: -10, width: 36, widthStep: 4, spreadDeg: 6, baseRot: -6 },
+      wing: { span: 0.9, height: 0.88 },
+      perch: { weight: 18 },
+      colors: { body: '#c9c2b4', wing: '#8b7d6c', accent: '#d1cabd', deep: '#2a2a2a' },
+      headX: 0.25, headY: 0.28, legScale: 0.8,
+      isOwl: true // Special flag for owl-specific features
+    },
+    // Heron
+    {
+      name: 'heron',
+      bodyW: [520, 600], bodyH: [300, 340], headR: [110, 130],
+      tiltDeg: [-14, -4], liftY: -10,
+      bodyShape: 'elongated', // Elongated, slender body
+      wingShape: 'swept', // Swept-back wings
+      tailPosition: 'trailing', // Trailing tail
+      beak: { type: 'needle', length: 1.8, height: 0.25, color: '#a08b5a' },
+      crest: { on: false },
+      tail: { count: 3, len: 140, lenStep: -10, width: 22, widthStep: 2, spreadDeg: 4, baseRot: -14 },
+      wing: { span: 1.0, height: 0.8 },
+      perch: { weight: 16 },
+      colors: { body: '#b9b6ad', wing: '#757f86', accent: '#c9c6be', deep: '#2b3441' },
+      headX: 0.36, headY: 0.18, legScale: 1.6
+    },
+    // Duck
+    {
+      name: 'duck',
+      bodyW: [560, 640], bodyH: [380, 440], headR: [130, 150],
+      tiltDeg: [-2, 6], liftY: 4,
+      bodyShape: 'boat', // Boat-shaped body for waterfowl
+      wingShape: 'paddle', // Paddle-like wings
+      tailPosition: 'flat', // Flat tail
+      beak: { type: 'chisel', length: 1.1, height: 0.8, color: '#d5b56a' },
+      crest: { on: false },
+      tail: { count: 4, len: 110, lenStep: -10, width: 24, widthStep: 3, spreadDeg: 8, baseRot: -2 },
+      wing: { span: 0.92, height: 0.86 },
+      perch: { weight: 20 },
+      colors: { body: '#a8a082', wing: '#7a6f57', accent: '#c7bca0', deep: '#2f3a48' },
+      headX: 0.32, headY: 0.20, legScale: 0.9
+    },
+    // Goldfinch
+    {
+      name: 'goldfinch',
+      bodyW: [420, 480], bodyH: [300, 340], headR: [115, 130],
+      tiltDeg: [-6, 6], liftY: 0,
+      bodyShape: 'compact', // Compact body
+      wingShape: 'pointed', // Pointed wings
+      tailPosition: 'forked', // Forked tail
+      beak: { type: 'cone', length: 0.65, height: 0.8, color: '#d3b26a' },
+      crest: { on: false },
+      tail: { count: 5, len: 120, lenStep: -10, width: 26, widthStep: 3, spreadDeg: 10, baseRot: -2 },
+      wing: { span: 0.9, height: 0.78 },
+      perch: { weight: 14 },
+      colors: { body: '#d4c15b', wing: '#6a5a3a', accent: '#e0d688', deep: '#2d2d2d' },
+      headX: 0.30, headY: 0.22, legScale: 0.95
+    }
+  ];
+}
+
+function pickSpecies() { return random(speciesCatalog()); }
+
+function pickLayoutAndSpecies() {
+  let idx = forcedLayoutIndex;
+  if (idx < 0 || idx > 2) idx = Math.floor(random(0, 3));
+  const layoutName = layoutNames[idx];
+  const all = speciesCatalog();
+  let names = [];
+  if (layoutName === 'small') names = ['cardinal','blue jay','robin','wren','goldfinch','hummingbird','sparrow','woodpecker'];
+  else if (layoutName === 'waterfowl') names = ['duck','heron','goose'];
+  else names = ['owl','hawk'];
+  const pool = all.filter(s => names.indexOf(s.name) !== -1);
+  const spec = random(pool.length ? pool : all);
+  return { layoutName, spec };
+}
+
+// ========= Audubon Bird =========
+
+function drawBirdAudubon(p, light, s) {
+  // validate species fields
+  s = s || {};
+  if (!Array.isArray(s.bodyW)) s.bodyW = [460, 520];
+  if (!Array.isArray(s.bodyH)) s.bodyH = [320, 360];
+  if (!Array.isArray(s.headR)) s.headR = [120, 136];
+  if (!Array.isArray(s.tiltDeg)) s.tiltDeg = [-6, 4];
+  // proportions per species
+  const bodyW = random(s.bodyW[0], s.bodyW[1]);
+  const bodyH = random(s.bodyH[0], s.bodyH[1]);
+  const headR = random(s.headR[0], s.headR[1]);
+
+  // pose adjustments
+  const poseTilt = radians(random(s.tiltDeg[0], s.tiltDeg[1]));
+  const poseLift = s.liftY || 0;
+  translate(0, poseLift);
+  rotate(poseTilt);
+
+  // cast shadow beneath body / water reflection for waterfowl
+  push();
+  noStroke();
+  if (currentLayoutName === 'waterfowl') {
+    const water = drawingContext.createLinearGradient(-bodyW, bodyH * 0.4, bodyW, bodyH * 0.4);
+    water.addColorStop(0, 'rgba(60,80,100,0.08)');
+    water.addColorStop(1, 'rgba(60,80,100,0.08)');
+    drawingContext.fillStyle = water;
+    ellipse(0, bodyH * 0.46, bodyW * 1.6, bodyH * 0.52);
+  } else {
+    const shGrad = drawingContext.createRadialGradient(0, bodyH * 0.44, 10, 0, bodyH * 0.44, bodyW * 0.8);
+    shGrad.addColorStop(0, 'rgba(0,0,0,0.22)');
+    shGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    drawingContext.fillStyle = shGrad;
+    ellipse(0, bodyH * 0.44, bodyW * 1.4, bodyH * 0.48);
+  }
+  pop();
+
+  // body base - different shapes for different species
+  push();
+  stroke(lerpColor(p.deep, color('#000'), 0.35));
+  strokeWeight(1.4);
+  fill(p.body);
+  
+  const bodyShape = s.bodyShape || 'oval';
+  if (bodyShape === 'oval') {
+    // Classic oval body
+    ellipse(0, 0, bodyW, bodyH);
+  } else if (bodyShape === 'teardrop') {
+    // Teardrop shape for sleek birds like blue jays
+    beginShape();
+    vertex(0, -bodyH * 0.4);
+    bezierVertex(bodyW * 0.3, -bodyH * 0.3, bodyW * 0.4, 0, 0, bodyH * 0.4);
+    bezierVertex(-bodyW * 0.4, 0, -bodyW * 0.3, -bodyH * 0.3, 0, -bodyH * 0.4);
+    endShape(CLOSE);
+  } else if (bodyShape === 'round') {
+    // Rounder, fuller body for robins
+    circle(0, 0, bodyW * 0.9);
+  } else if (bodyShape === 'compact') {
+    // Compact, upright body for wrens and goldfinches
+    ellipse(0, 0, bodyW * 0.8, bodyH * 1.1);
+  } else if (bodyShape === 'streamlined') {
+    // Streamlined body for hummingbirds
+    beginShape();
+    vertex(-bodyW * 0.3, 0);
+    bezierVertex(-bodyW * 0.1, -bodyH * 0.3, bodyW * 0.2, -bodyH * 0.2, bodyW * 0.4, 0);
+    bezierVertex(bodyW * 0.2, bodyH * 0.2, -bodyW * 0.1, bodyH * 0.3, -bodyW * 0.3, 0);
+    endShape(CLOSE);
+  } else if (bodyShape === 'cylindrical') {
+    // Cylindrical body for woodpeckers
+    rect(-bodyW * 0.4, -bodyH * 0.4, bodyW * 0.8, bodyH * 0.8, bodyH * 0.2);
+  } else if (bodyShape === 'barrel') {
+    // Barrel-shaped body for owls
+    ellipse(0, 0, bodyW * 0.9, bodyH * 1.1);
+  } else if (bodyShape === 'elongated') {
+    // Elongated body for herons
+    ellipse(0, 0, bodyW * 1.2, bodyH * 0.8);
+  } else if (bodyShape === 'boat') {
+    // Boat-shaped body for waterfowl
+    beginShape();
+    vertex(-bodyW * 0.4, -bodyH * 0.2);
+    bezierVertex(-bodyW * 0.2, -bodyH * 0.3, bodyW * 0.2, -bodyH * 0.3, bodyW * 0.4, -bodyH * 0.2);
+    bezierVertex(bodyW * 0.4, bodyH * 0.3, -bodyW * 0.2, bodyH * 0.3, -bodyW * 0.4, bodyH * 0.2);
+    bezierVertex(-bodyW * 0.2, bodyH * 0.3, -bodyW * 0.4, bodyH * 0.2, -bodyW * 0.4, -bodyH * 0.2);
+    endShape(CLOSE);
+  } else {
+    // Default to oval
+    ellipse(0, 0, bodyW, bodyH);
+  }
+  
+  // painterly belly highlight
+  softOval(bodyW * -0.1, bodyH * 0.02, bodyW * 0.7, bodyH * 0.52, p.highlight, 120);
+  // side shadow
+  softOval(-bodyW * 0.22, -bodyH * 0.04, bodyW * 0.86, bodyH * 0.66, p.shadow, 160);
+  drawHatchEllipse(0, 0, bodyW * 0.92, bodyH * 0.78, -22, 8, 1.2, 30);
+  
+  // Species-specific body patterns
+  if (s.name === 'woodpecker') {
+    // Woodpecker barring pattern
+    stroke(lerpColor(p.deep, color('#000'), 0.6));
+    strokeWeight(1);
+    for (let i = 0; i < 8; i++) {
+      const y = -bodyH * 0.3 + i * bodyH * 0.08;
+      line(-bodyW * 0.3, y, bodyW * 0.3, y);
+    }
+    noStroke();
+  } else if (s.name === 'hummingbird') {
+    // Hummingbird iridescent patches
+    fill(lerpColor(p.accent, color('#fff'), 0.3));
+    ellipse(-bodyW * 0.15, -bodyH * 0.1, bodyW * 0.2, bodyH * 0.15);
+    ellipse(bodyW * 0.15, -bodyH * 0.1, bodyW * 0.2, bodyH * 0.15);
+  } else if (s.name === 'duck') {
+    // Duck waterfowl pattern
+    fill(lerpColor(p.accent, color('#fff'), 0.2));
+    ellipse(0, bodyH * 0.1, bodyW * 0.4, bodyH * 0.2);
+  } else if (s.name === 'heron') {
+    // Heron streaking
+    stroke(lerpColor(p.deep, color('#000'), 0.4));
+    strokeWeight(1.5);
+    for (let i = 0; i < 6; i++) {
+      const x = -bodyW * 0.2 + i * bodyW * 0.08;
+      line(x, -bodyH * 0.2, x, bodyH * 0.2);
+    }
+    noStroke();
+  }
+  pop();
+
+  // tail feathers - different positions and styles for different species
+  push();
+  const tailPosition = s.tailPosition || 'center';
+  let tailX, tailY;
+  
+  // Position tail based on species
+  if (tailPosition === 'center') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.06;
+  } else if (tailPosition === 'high') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * -0.1;
+  } else if (tailPosition === 'low') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.2;
+  } else if (tailPosition === 'upright') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * -0.15;
+  } else if (tailPosition === 'forked') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.06;
+  } else if (tailPosition === 'stiff') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.02;
+  } else if (tailPosition === 'short') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.06;
+  } else if (tailPosition === 'trailing') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.15;
+  } else if (tailPosition === 'flat') {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.1;
+  } else {
+    tailX = -bodyW * 0.46;
+    tailY = bodyH * 0.06;
+  }
+  
+  translate(tailX, tailY);
+  const tail = (s && s.tail) ? s.tail : {};
+  const tailBaseRot = (typeof tail.baseRot === 'number') ? tail.baseRot : -2;
+  
+  // Adjust rotation based on tail position
+  let rotationAdjust = 0;
+  if (tailPosition === 'upright') rotationAdjust = 15;
+  else if (tailPosition === 'high') rotationAdjust = 8;
+  else if (tailPosition === 'low') rotationAdjust = -8;
+  else if (tailPosition === 'stiff') rotationAdjust = -5;
+  
+  rotate(radians(tailBaseRot + rotationAdjust + random(-4, 4)));
+  const tailCount = (typeof tail.count === 'number') ? tail.count : 5;
+  
+  for (let i = 0; i < tailCount; i++) {
+    const baseLen = (typeof tail.len === 'number') ? tail.len : 150;
+    const lenStep = (typeof tail.lenStep === 'number') ? tail.lenStep : -16;
+    const baseWid = (typeof tail.width === 'number') ? tail.width : 30;
+    const widStep = (typeof tail.widthStep === 'number') ? tail.widthStep : 3;
+    const spreadDeg = (typeof tail.spreadDeg === 'number') ? tail.spreadDeg : 10;
+    const len = baseLen + i * lenStep;
+    const wid = baseWid + i * widStep;
+    const spread = radians(spreadDeg * (i / Math.max(1, tailCount - 1)));
+    const y = i * 12;
+    const base = createVector(0, y);
+    const tip = createVector(-len * cos(spread), y + random(-6, 6) + len * sin(spread) * 0.02);
+    const cFill = lerpColor(p.wing, color('#111'), i / (tailCount * 1.3));
+    const cEdge = lerpColor(cFill, color('#000'), 0.25);
+    
+    // Special tail shapes for certain species
+    if (tailPosition === 'forked' && i === 0) {
+      // Forked tail for hummingbirds and goldfinches
+      const forkLen = len * 0.3;
+      featherPolygon([
+        createVector(base.x, base.y - wid * 0.3),
+        createVector(tip.x - forkLen, tip.y - wid * 0.2),
+        createVector(tip.x, tip.y),
+        createVector(tip.x - forkLen, tip.y + wid * 0.2),
+        createVector(base.x, base.y + wid * 0.3)
+      ], cFill, cEdge);
+    } else if (tailPosition === 'flat' && i === 0) {
+      // Flat tail for waterfowl
+      featherPolygon([
+        createVector(base.x, base.y - wid * 0.4),
+        createVector(tip.x, tip.y - wid * 0.2),
+        createVector(tip.x, tip.y + wid * 0.2),
+        createVector(base.x, base.y + wid * 0.4)
+      ], cFill, cEdge);
+    } else {
+      // Standard tail feather
+      featherPolygon([
+        createVector(base.x, base.y - wid * 0.5),
+        createVector(tip.x, tip.y - wid * 0.28),
+        createVector(tip.x, tip.y + wid * 0.28),
+        createVector(base.x, base.y + wid * 0.5)
+      ], cFill, cEdge);
+    }
+  }
+  pop();
+
+  // wing (layered coverts + primaries)
+  push();
+  translate(-bodyW * 0.02, -bodyH * 0.06);
+  const wing = (s && s.wing) ? s.wing : {};
+  const wingSpanBase = (typeof wing.span === 'number') ? wing.span : 0.9;
+  const wingHeightBase = (typeof wing.height === 'number') ? wing.height : 0.8;
+  const wingSpan = bodyW * random(wingSpanBase, wingSpanBase + 0.08);
+  const wingHeight = bodyH * random(wingHeightBase, wingHeightBase + 0.08);
+
+  // main wing silhouette - different shapes for different species
+  stroke(lerpColor(p.deep, color('#000'), 0.35));
+  strokeWeight(1.3);
+  fill(p.wing);
+  
+  const wingShape = s.wingShape || 'rounded';
+  const baseY = -wingHeight * 0.08;
+  
+  if (wingShape === 'rounded') {
+    // Classic rounded wings
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.64) - noise(x * 0.01, 0) * 16;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.28) + noise(x * 0.01, 10) * 9 + 26;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'pointed') {
+    // Pointed wings for blue jays and goldfinches
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.64) - noise(x * 0.01, 0) * 16;
+      if (t > 0.8) y -= (t - 0.8) * 40; // Pointed tip
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.28) + noise(x * 0.01, 10) * 9 + 26;
+      if (t > 0.8) y -= (t - 0.8) * 40; // Pointed tip
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'curved') {
+    // Curved wings for robins
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.64) - noise(x * 0.01, 0) * 16 + sin(t * PI * 2) * 8;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.28) + noise(x * 0.01, 10) * 9 + 26 + sin(t * PI * 2) * 8;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'short') {
+    // Shorter wings for wrens
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.6);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.5) - noise(x * 0.01, 0) * 12;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.6);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.25) + noise(x * 0.01, 10) * 7 + 20;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'long') {
+    // Long, narrow wings for hummingbirds
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.8);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.4) - noise(x * 0.01, 0) * 8;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.8);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.2) + noise(x * 0.01, 10) * 5 + 15;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'angular') {
+    // Angular wings for woodpeckers
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      let y = baseY - sin(t * PI) * (wingHeight * 0.64) - noise(x * 0.01, 0) * 16;
+      if (t > 0.6 && t < 0.8) y -= 15; // Angular bend
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      let y = baseY - sin(t * PI) * (wingHeight * 0.28) + noise(x * 0.01, 10) * 9 + 26;
+      if (t > 0.6 && t < 0.8) y -= 15; // Angular bend
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'broad') {
+    // Broad, rounded wings for owls
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.7) - noise(x * 0.01, 0) * 20;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.3) + noise(x * 0.01, 10) * 12 + 30;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'swept') {
+    // Swept-back wings for herons
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.6) - noise(x * 0.01, 0) * 14 - t * 20;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.25) + noise(x * 0.01, 10) * 7 + 20 - t * 20;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else if (wingShape === 'paddle') {
+    // Paddle-like wings for waterfowl
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.5) - noise(x * 0.01, 0) * 10;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.2) + noise(x * 0.01, 10) * 5 + 15;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  } else {
+    // Default to rounded
+    beginShape();
+    for (let i = 0; i <= 70; i++) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.64) - noise(x * 0.01, 0) * 16;
+      vertex(x, y);
+    }
+    for (let i = 70; i >= 0; i--) {
+      const t = i / 70;
+      const x = -wingSpan * 0.46 + t * (wingSpan * 0.72);
+      const y = baseY - sin(t * PI) * (wingHeight * 0.28) + noise(x * 0.01, 10) * 9 + 26;
+      vertex(x, y);
+    }
+    endShape(CLOSE);
+  }
+
+  // feather striations (brushy)
+  stroke(255, 24);
+  strokeWeight(1.4);
+  const featherLines = 12;
+  for (let i = 0; i <= featherLines; i++) {
+    const t = i / featherLines;
+    const sx = -wingSpan * 0.38 + t * (wingSpan * 0.58);
+    const sy = baseY - sin(t * PI) * (wingHeight * 0.52) + 4;
+    const ex = sx + (t - 0.2) * 68;
+    const ey = sy + 56 + noise(t * 3, 2) * 14;
+    brushStroke(sx, sy, ex, ey, 2.2, color(255, 36), 0.45, 5);
+  }
+
+  // subtle wing shading depth
+  softOval(-wingSpan * 0.12, -wingHeight * 0.06, wingSpan * 0.6, wingHeight * 0.5, p.shadow, 140);
+  drawWingBars(baseY, wingSpan, wingHeight, 2 + Math.floor(random(0, 2)), color(255, 40));
+  pop();
+
+  // head
+  push();
+  const headX = (typeof s.headX === 'number') ? s.headX : 0.3;
+  const headY = (typeof s.headY === 'number') ? s.headY : 0.22;
+  translate(bodyW * headX, -bodyH * headY);
+  stroke(lerpColor(p.deep, color('#000'), 0.35));
+  strokeWeight(1.2);
+  fill(p.body);
+  noStroke();
+  circle(0, 0, headR);
+  // cheek highlight and crown shadow
+  softOval(-headR * 0.06, headR * 0.02, headR * 0.68, headR * 0.52, p.highlight, 120);
+  softOval(-headR * 0.22, -headR * 0.18, headR * 0.86, headR * 0.66, p.shadow, 140);
+
+  // crest
+  const crest = (s && s.crest) ? s.crest : null;
+  if (crest && crest.on) {
+    const ch = crest.height || 24;
+    const cw = crest.width || 44;
+    const cx = -headR * 0.12;
+    const cy = -headR * 0.5;
+    brushStroke(cx - cw * 0.2, cy + ch * 0.1, cx + cw * 0.2, cy - ch * 0.1, 6, color(red(toColor(p.body)), green(toColor(p.body)), blue(toColor(p.body)), 200), 0.6, 8);
+  }
+
+  // eye
+  const eyeR = headR * 0.12;
+  fill(255);
+  circle(headR * 0.02, -headR * 0.12, eyeR * 1.18);
+  fill(p.eye);
+  circle(headR * 0.02, -headR * 0.12, eyeR * 0.66);
+  fill(p.highlight);
+  circle(headR * 0.07, -headR * 0.16, eyeR * 0.25);
+
+  // cap patches for some species
+  if (s.name === 'goldfinch' || s.name === 'blue jay' || s.name === 'woodpecker') {
+    drawCapPatch(headR, lerpColor(p.deep, color('#000'), 0.5));
+  }
+
+  // mask or throat patch
+  const mask = (s && s.mask) ? s.mask : null;
+  if (mask && mask.on) {
+    const m = mask.size || 18;
+    fill(lerpColor(p.deep, color('#000'), 0.3));
+    softOval(headR * 0.1, -headR * 0.08, m * 2, m * 1.4, lerpColor(p.deep, color('#000'), 0.3), 160);
+  }
+  const throat = (s && s.throatPatch) ? s.throatPatch : null;
+  if (throat && throat.on) {
+    const tc = hex(throat.color || '#8a3a3a');
+    softOval(headR * -0.02, headR * 0.06, headR * 0.6, headR * 0.34, tc, 150);
+  }
+
+  // beak
+  push();
+  rotate(radians(random(-6, 6)));
+  const beak = (s && s.beak) ? s.beak : {};
+  fill(beak.color ? toColor(beak.color) : toColor(p.beak));
+  const bLen = ((typeof beak.length === 'number') ? beak.length : 1.0) * random(0.9, 1.1);
+  const bHei = ((typeof beak.height === 'number') ? beak.height : 0.6) * random(0.9, 1.1);
+  const beakL = headR * bLen;
+  const beakH = headR * 0.2 * bHei;
+  if (beak.type === 'needle') {
+    triangle(headR * 0.35, -headR * 0.02, headR * 0.35, headR * 0.06, headR * 0.35 + beakL, headR * 0.02);
+  } else if (beak.type === 'cone') {
+    triangle(headR * 0.35, -beakH * 0.4, headR * 0.35, beakH * 0.6, headR * 0.35 + beakL * 0.9, beakH * 0.1);
+  } else if (beak.type === 'chisel') {
+    quad(headR * 0.35, -beakH * 0.3, headR * 0.35 + beakL, -beakH * 0.1, headR * 0.35 + beakL, beakH * 0.1, headR * 0.35, beakH * 0.3);
+  } else {
+    triangle(headR * 0.35, -beakH * 0.5, headR * 0.35, beakH * 0.5, headR * 0.35 + beakL, 0);
+  }
+  // beak specular
+  softOval(headR * 0.46, headR * 0.02, beakL * 0.5, headR * 0.2, p.highlight, 110);
+  pop();
+  pop();
+
+  // legs and feet (brushy lines)
+  push();
+  stroke(lerpColor(p.deep, color('#000'), 0.2));
+  const legBaseY = bodyH * 0.42;
+  const legX = bodyW * 0.08;
+  const legScale = (typeof s.legScale === 'number') ? s.legScale : 1.0;
+  brushStroke(legX, legBaseY - 24 * legScale, legX - 6, legBaseY + 40 * legScale, 3.2, color(60, 60, 60, 240), 0.35, 10);
+  brushStroke(legX + 26, legBaseY - 28 * legScale, legX + 18, legBaseY + 46 * legScale, 3.2, color(60, 60, 60, 240), 0.35, 10);
+  brushStroke(legX - 30, legBaseY + 50 * legScale, legX - 2, legBaseY + 50 * legScale, 2.6, color(60, 60, 60, 220), 0.35, 7);
+  brushStroke(legX + 6, legBaseY + 50 * legScale, legX + 32, legBaseY + 50 * legScale, 2.6, color(60, 60, 60, 220), 0.35, 7);
+  pop();
+}
+
+function drawPerch(p, s) {
+  push();
+  translate(-260, 260);
+  const len = 620;
+  const y = 0;
+  if (currentLayoutName === 'waterfowl') {
+    // waterline with subtle ripples
+    noStroke();
+    fill(120, 150, 170, 60);
+    rect(-40, y + 10, len + 80, 60);
+    for (let i = 0; i < 80; i++) {
+      const wx = random(-20, len + 20);
+      const wy = y + 10 + random(0, 60);
+      stroke(255, 40);
+      strokeWeight(random(0.6, 1.2));
+      line(wx, wy, wx + random(10, 28), wy);
+    }
+  } else {
+    // branch perch with leaves
+    stroke(lerpColor(p.foliage, color('#5b3f2a'), 0.5));
+    strokeWeight((s && s.perch && s.perch.weight) ? s.perch.weight : 18);
+    line(0, y, len, y);
+    for (let i = 0; i < 90; i++) {
+      const x = random(0, len);
+      const w = random(12, 38);
+      const off = random(-6, 6);
+      const c = lerpColor(p.foliage, color('#3a281b'), 0.4);
+      brushStroke(x, y + off, x + w, y + off + random(-2, 2), 2.2, color(red(c), green(c), blue(c), 140), 0.4, 4);
+    }
+    noStroke();
+    for (let i = 0; i < 10; i++) {
+      const lx = random(40, len - 40);
+      const ly = y + random(-34, 38);
+      const leafCol = lerpColor(p.foliage, color('#2f5e3a'), random(0.2, 0.6));
+      push();
+      translate(lx, ly);
+      rotate(radians(random(-30, 30)));
+      fill(red(leafCol), green(leafCol), blue(leafCol), 200);
+      ellipse(0, 0, random(16, 30), random(8, 18));
+      pop();
+    }
+  }
+  pop();
+}
+
+function drawSignature(seed) {
+  // Optionally include species name if available on last render
+  const label = (window.__lastSpeciesName ? ('audubon ' + window.__lastSpeciesName + ' ') : 'audubon bird ') + seed.toString(36) + (isMuted ? ' [muted]' : '');
+  noStroke();
+  fill(0, 140);
+  textSize(16);
+  textAlign(RIGHT, BOTTOM);
+  text(label, width - 24, height - 18);
+  // Latin-like name (fake) on left
+  textAlign(LEFT, BOTTOM);
+  fill(0, 110);
+  const latin = (window.__lastSpeciesName || 'Aves Illustrata').split(' ')[0];
+  text(latin + ' illustrata', 24, height - 40);
+}
+
+// ========= WebAudio (no worklet, pure WebAudio) =========
+const audioState = { ctx: null, master: null };
+
+function getOrCreateAudio() {
+  if (!audioState.ctx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    const ctx = new Ctx();
+    const master = ctx.createGain();
+    master.gain.value = 0.15;
+    master.connect(ctx.destination);
+    audioState.ctx = ctx;
+    audioState.master = master;
+  }
+  return audioState;
+}
+
+function quickBeep(type, startHz, endHz, durationMs, attackMs, releaseMs, startOffsetSec = 0) {
+  const a = getOrCreateAudio();
+  if (!a) return;
+  const ctx = a.ctx;
+  const t0 = ctx.currentTime + startOffsetSec;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(startHz, t0);
+  if (endHz != null && endHz !== startHz) {
+    osc.frequency.linearRampToValueAtTime(endHz, t0 + durationMs / 1000);
+  }
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(1, t0 + (attackMs || 5) / 1000);
+  g.gain.linearRampToValueAtTime(0.0001, t0 + durationMs / 1000);
+  osc.connect(g);
+  g.connect(a.master);
+  osc.start(t0);
+  osc.stop(t0 + (durationMs + (releaseMs || 20)) / 1000);
+}
+
+function tryPlayCall(layoutName) {
+  if (isMuted) return;
+  const a = getOrCreateAudio();
+  if (!a) return;
+  if (a.ctx.state !== 'running') { a.ctx.resume(); }
+  if (layoutName === 'waterfowl') return playWaterfowl();
+  if (layoutName === 'raptor') return playRaptor();
+  return playSmall();
+}
+
+function playSmall() {
+  quickBeep('sine', 1100, 1400, 120, 5, 20, 0);
+  quickBeep('sine', 900, 1200, 110, 5, 20, 0.16);
+}
+
+function playWaterfowl() {
+  quickBeep('square', 350, 320, 120, 5, 30, 0);
+  quickBeep('square', 330, 300, 120, 5, 30, 0.15);
+  quickBeep('square', 310, 290, 120, 5, 30, 0.30);
+}
+
+function playRaptor() {
+  quickBeep('triangle', 2800, 700, 800, 10, 200, 0);
+}
+
+// ========= Photoreal (local SD img2img) =========
+function addUI() {
+  const btn = document.createElement('button');
+  btn.textContent = 'Photorealize Audubon Bird (SD local)';
+  btn.style.position = 'fixed';
+  btn.style.top = '12px';
+  btn.style.right = '12px';
+  btn.style.zIndex = '9999';
+  btn.style.padding = '8px 12px';
+  btn.style.borderRadius = '6px';
+  btn.style.border = '1px solid #333';
+  btn.style.background = '#222';
+  btn.style.color = '#fff';
+  btn.style.cursor = 'pointer';
+  btn.onclick = () => photorealizeLocal().catch(err => alert('Photorealize failed: ' + err.message));
+  document.body.appendChild(btn);
+}
+
+async function photorealizeLocal() {
+  // Requires Automatic1111 WebUI running with --api (default port 7860)
+  const canvasEl = document.querySelector('canvas');
+  if (!canvasEl) throw new Error('Canvas not found');
+  const dataUrl = canvasEl.toDataURL('image/png');
+  const b64 = dataUrl.split(',')[1];
+  const payload = {
+    prompt: 'highly detailed photorealistic bird, natural plumage, realistic lighting, depth of field, 4k, inspired by audubon plate photography',
+    negative_prompt: 'low quality, cartoon, painting, drawing, extra limbs, deformed, text, watermark, blurry, jpeg artifacts',
+    steps: 20,
+    sampler_name: 'DPM++ 2M Karras',
+    cfg_scale: 5.5,
+    width: 1024,
+    height: 1024,
+    denoising_strength: 0.5,
+    init_images: [b64]
+  };
+  const url = 'http://127.0.0.1:7860/sdapi/v1/img2img';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const json = await res.json();
+  const out = json && json.images && json.images[0];
+  if (!out) throw new Error('No image returned');
+  const img = new Image();
+  img.onload = function () { image(img, 0, 0, width, height); };
+  img.src = 'data:image/png;base64,' + out;
+}
+  </script>
+</head>
+<body>
+  <div class="instructions">
+    <h3>🦉 Audubon Bird Generator</h3>
+    <p><span class="key">Click</span> or <span class="key">Space</span> - New bird</p>
+    <p><span class="key">S</span> - Save image</p>
+    <p><span class="key">1</span> - Small birds</p>
+    <p><span class="key">2</span> - Waterfowl</p>
+    <p><span class="key">3</span> - Raptors (includes owls!)</p>
+    <p><span class="key">O</span> - Force owl generation</p>
+    <p><span class="key">C</span> - Play bird call</p>
+    <p><span class="key">M</span> - Toggle sound</p>
+    <p><strong>🦉 Owls now face forward with both eyes visible!</strong></p>
+    <p><strong>🎨 Each species now has unique body shapes, wings, and tails!</strong></p>
+  </div>
+</body>
+</html>
+
+
